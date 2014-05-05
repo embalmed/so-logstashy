@@ -1,0 +1,4 @@
+#!/bin/bash
+##  place in /etc/cron.daily/
+find /opt/log/remote -type f -mtime +1 -name "*.log" -exec bzip2 '{}' \;
+find /opt/log/remote-bytype -type f -mtime +1 -name "*.log" -exec bzip2 '{}' \;

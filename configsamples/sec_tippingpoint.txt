@@ -1,0 +1,116 @@
+type=single
+desc=Set log file and addressee list
+ptype=substr
+pattern=SEC_STARTUP
+context=SEC_INTERNAL_EVENT
+action= eval %r (use POSIX qw(strftime);); \
+        eval %d ( $date = strftime "%%Y-%%m-%%d", localtime; return $date;); \
+	assign %logfile /opt/log/remote-bytype/tippingpt-%d.log; \
+	assign %unknown /opt/log/remote-bytype/tippingpt-unknown-%d.log; \
+	assign %e someemailaddress@somedomain.org;
+
+#suppress sec_shutdown messages from logs
+type=suppress
+pattern=SEC_SHUTDOWN
+ptype=regexp
+desc=sec shutdown
+
+#update the logfile locations at midnight so we don't have to restart SEC
+type=Calendar
+time=0 0 * * *
+desc=Change date variables
+action=eval %d ( strftime "%%Y-%%m-%%d", localtime ); \
+	assign %logfile /opt/log/remote-bytype/tippingpt-%d.log; \
+	assign %unknown /opt/log/remote-bytpe/tippingpt-unknown-%d.log;
+
+#create jira tickets 1 per type per 86400 seconds (1day)
+type=single
+desc=[SEC-JIRA] $1
+ptype=regexp
+pattern=^JIRA_'(.+)'_(.+)
+context = !jira_$1
+action = create jira_$1 86400; shellcmd echo '$2' | /usr/local/sbin/sec_jira.pl '%s'; 
+
+#suppress the rest of the jira messages so they don't go to logs
+type=suppress
+desc=[SEC-JIRA] $1
+ptype=regexp
+pattern=^JIRA_'(.+)'_(.+)
+context = jira_$1
+
+#if we don't do this, we end up losing these events from the logs altogether
+#continue=takenext is important
+type=single
+desc=write events to file, then start collecting them
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\".+\",\d+,\"\w+\",(\d+\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+action=write %logfile $0
+continue=takenext
+
+type=suppress
+desc=Zabbix cluster traffic known good filter, suppress
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\"7002:\sTCP:.+\",\d+,\"\w+\",15\.185\.158\.87,\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+
+type=EventGroup
+desc=[SEC-W_TP004] Multiple Port Scan alerts from NOVA Public Host $2  (>10 in 30min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\".+Port Scan\",\d+,\"\w+\",(15\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+init = create novaps_$1_$2
+count = add novaps_$1_$2 $0
+action = report novaps_$1_$2 /usr/local/sbin/sec_mail.pl '%s'; event 0 JIRA_'%s'_$0
+end = delete novaps_$1_$2
+window = 1800
+thresh = 10
+
+#nova icmp host sweep
+type=EventGroup
+desc=[SEC-W_TP005] Multiple Host Sweep alerts from NOVA Public Host $3  (>10 in 30min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\".+(ICMP|TCP): Host Sweep\",\d+,\"\w+\",(15\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+init = create novahs_$1_$3
+count = add novahs_$1_$3 $0
+action = report novahs_$1_$3 /usr/local/sbin/sec_mail.pl '%s'; event 0 JIRA_'%s'_$0
+end = delete novahs_$1_$3
+window = 1800
+thresh = 10
+
+type=EventGroup
+desc=[SEC-W_TP003] Possible Outbound SSH BruteForce from NOVA Public Host $2  (>100 in 5min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\"5601:\sSSH:.+\",\d+,\"\w+\",(15\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+init = create novassh_$1_$2
+count = add novassh_$1_$2 $0
+action = report novassh_$1_$2 /usr/local/sbin/sec_mail.pl '%s'; event 0 JIRA_'%s'_$0
+end = delete novassh_$1_$2
+window = 600
+thresh = 100
+
+type=EventGroup
+desc=[SEC-W_TP002] Multiple Outbound BadReputation alerts from NOVA Public Host $2  (>50 in 60min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\"BadReputation\",\d+,\"\w+\",(15\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+init = create novabr_$1_$2
+count = add novabr_$1_$2 $0
+action = report novabr_$1_$2 /usr/local/sbin/sec_mail.pl '%s'; event 0 JIRA_'%s'_$0
+end = delete novabr_$1_$2
+window = 3600
+thresh = 50
+
+type=EventGroup
+desc=[SEC-W_TP001] Multiple Outbound alerts from NOVA Public Host $2  (>10 in 30min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+) \d,\d,.+,.+,\".+\",\d+,\"\w+\",(15\.\d+\.\d+\.\d+),\d+,\d+\.\d+\.\d+\.\d+,\d+,\d+,.+NOVA outbound.+,.+NOVA outbound.+,
+init = create novaob_$1_$2
+count = add novaob_$1_$2 $0
+action = report novaob_$1_$2 /usr/local/sbin/sec_mail.pl '%s'; event 0 JIRA_'%s'_$0
+end = delete novaob_$1_$2
+window = 1800
+thresh = 10
+
+#write anything that doesn't match to file without any action
+type=single
+desc=Log messages to file
+ptype=regexp
+pattern=.+
+action=write %logfile $0

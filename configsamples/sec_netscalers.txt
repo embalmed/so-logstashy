@@ -1,0 +1,92 @@
+##################
+##  NETSCALERS  ##
+#################################################################################
+#  Last Update  7/5/13                                                      #
+#                                                                               #
+#################################################################################
+
+#set up initial contexts and output files / variables
+type=single
+desc=Set log file and addressee list
+ptype=substr
+pattern=SEC_STARTUP
+context=SEC_INTERNAL_EVENT
+action= eval %r (use POSIX qw(strftime);); \
+        eval %d ( $date = strftime "%%Y-%%m-%%d", localtime; return $date;); \
+        assign %f /opt/log/remote-bytype/netscaler-%d.log; \
+        assign %e someemailaddress@somedomain.org;
+
+#suppress sec_shutdown messages from logs
+type=suppress
+pattern=SEC_SHUTDOWN
+ptype=regexp
+desc=sec shutdown
+
+
+#clean up logs first and resubmit them to sec
+##strip extra timestamp and hostname
+##
+## from this
+##2013-07-05T17:09:12.814457+00:00 lb2z1aw2.net.redacted.net  07/05/2013:17:09:12 GMT lb2z1aw2 0-PPE-1 : IPSEC Message 885 0 :  "0:15.185.64.15[500] - 15.185.11.100[16382]:0x80e2470:unknown ikev2 peer#012"
+## to this
+##2013-07-05T17:09:12.814457+00:00 lb2z1aw2.net.redacted.net 0-PPE-1 : IPSEC Message 885 0 :  "0:15.185.64.15[500] - 15.185.11.100[16382]:0x80e2470:unknown ikev2 peer#012"
+
+type=single
+ptype=regexp
+desc=$1 $2 $3
+pattern=(^\d+-\d+-\S+)\s(\S+)\s+\d+\/\d+\/\d+:\d+:\d+:\d+\sGMT\s\S+\s(.+)
+action=event 0 %s
+
+#set up syslog heartbeat
+type=single
+ptype=regexp
+pattern=^\d+-\d+-\S+\s(\S+)\s+
+continue=takenext
+desc=[SEC-W] Have not received syslogs from $1 in 12 Hours 
+action=create HEARTBEAT_$1 43200 (shellcmd echo $0 | /usr/local/sbin/sec_mail.pl '%s' '%e' )
+
+#detect brute force attack from vuln scanner
+#filter out messages, but log a Bruteforce scan started message the first time
+#suppress for 15 minutes
+type=SingleWithSuppress
+ptype=regexp
+desc="$1 $2 Vulnerability Scan Started Bruteforce ---  Suppressing logs..."
+pattern=(^\d+-\d+-\S+) (\S+).+UI CMD_EXECUTED \d+ \d+ :\s+User\s(.+)\s- Remote_ip 15.185.11.(100|106) - Command "login.+" - Status "ERROR: Invalid username or password"
+window = 900
+action=write %f %s
+
+
+#capture remaining bruteforce events for eventgroup
+#send logs to logfile anyway, just alert if more than 15 in 30 min from same source ip
+type=EventGroup
+desc=[SEC-W_NS001] Possible brute force attempt of $1 from $3 (>15 in 30min)
+ptype=regexp
+pattern=^\d+-\d+-\S+ (\S+).+UI CMD_EXECUTED \d+ \d+ :\s+User (\w+) - Remote_ip (\d+\.\d+\.\d+\.\d+) - Command "login.+" - Status "ERROR: Invalid username or password"
+init = create brute_$1_$3 
+count = add brute_$1_$3 $0
+action = report brute_$1_$3 /usr/local/sbin/sec_mail.pl '%s' '%e'
+end = delete brute_$1_$3 
+window = 1800
+thresh = 15
+continue = takenext
+
+#strip out the PPE section and write cleaner logs of CMD_EXECUTED
+type=single
+desc=$1 UI CMD_EXECUTED $2
+ptype=regexp
+pattern=(^\d+-\d+-\S+\s\S+)\s+\d+-PPE-\d+\s:\sUI\sCMD_EXECUTED\s\d+\s\d+\s:\s+(.+)
+action=write %f %s
+
+#strip out the PPE section and write cleaner logs of SNMP/EVENT messages
+type=single
+desc=$1 $2$3
+ptype=regexp
+pattern=(^\d+-\d+-\S+\s\S+)\s+\d+-PPE-\d+\s:\s(EVENT|SNMP)(.+)
+action=write %f %s
+
+#unknown messages
+type=single
+desc=Log unknown messages to unknown and regular log
+ptype=regexp
+pattern=.+
+action=write %u $0;write %f $0

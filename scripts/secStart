@@ -1,0 +1,14 @@
+#!/bin/sh
+#
+# secStart - Print SEC command line with default options.
+usage () {
+echo "usage: $progname config
+'config' is the name of an SEC config file in /usr/local/etc/
+sec/." >&2
+exit 2
+}
+progname=`basename $0`
+[ $# -eq 1 ] || usage
+
+/usr/local/sbin/sec --conf=/usr/local/etc/sec/$1 --pid=/tmp/sec-$1.pid --dump=/tmp/sec-$1.dump --debug=5 --syslog=local1 --intevents --input=- --notail
+
